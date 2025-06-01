@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================="
-echo "🛠  Pterodactyl Panel Localhost Installer with PHP 8.2 + SSL + Wings"
+echo "🛠  Pterodactyl Panel Localhost Installer"
 echo "======================================="
 
 # --- INPUT PENGGUNA ---
@@ -17,11 +17,11 @@ DB_USER="ptero"
 DB_PASS="p@ssw0rd"
 DB_NAME="panel"
 
-# --- PASANG DEPENDENSI ---
-echo "🔍 Memeriksa dan memasang dependensi..."
+# --- PASANG DEPENDENSI (SKIP JIKA SUDAH ADA) ---
+echo "🔍 Memeriksa dependensi..."
 
 check_and_install() {
-    if ! dpkg -l | grep -qw "$1"; then
+    if ! dpkg -l | grep -q "^ii  $1 "; then
         echo "📦 Memasang $1..."
         sudo apt install -y "$1"
     else
@@ -31,30 +31,30 @@ check_and_install() {
 
 sudo apt update && sudo apt upgrade -y
 
-# Pakej asas
-for pkg in curl git unzip nginx mariadb-server redis-server software-properties-common apt-transport-https ca-certificates gnupg lsb-release; do
+for pkg in curl git unzip nginx mariadb-server redis-server software-properties-common jq certbot python3-certbot-nginx; do
     check_and_install "$pkg"
 done
 
-# --- PASANG PHP 8.2 DAN MODULE ---
+# --- PPA PHP 8.2 ---
 if ! php -v | grep -q "PHP 8.2"; then
     echo "➕ Menambah PPA PHP 8.2..."
     sudo add-apt-repository ppa:ondrej/php -y
     sudo apt update
 fi
 
-for phppkg in php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-fileinfo php8.2-gd php8.2-opcache; do
+# --- PASANG PHP 8.2 DAN MODULE ---
+for phppkg in php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath; do
     check_and_install "$phppkg"
 done
 
-# --- Setup Database ---
+# --- SETUP DATABASE ---
 echo "🗃️ Menyediakan pangkalan data..."
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
 sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'127.0.0.1';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
-# --- PASANG COMPOSER ---
+# --- PASANG COMPOSER JIKA TIADA ---
 if ! command -v composer &> /dev/null; then
     echo "📦 Memasang Composer..."
     curl -sS https://getcomposer.org/installer | php
@@ -72,21 +72,22 @@ if [ ! -d /var/www/panel ]; then
 fi
 cd /var/www/panel
 
+# --- COPY .env JIKA BELUM ADA ---
 if [ ! -f .env ]; then
-    cp .env.example .env
+    sudo cp .env.example .env
 fi
 
-# --- COMPOSER INSTALL ---
+# --- COMPOSER INSTALL JIKA TIADA vendor/ ---
 if [ ! -d "vendor" ]; then
     echo "📦 Menjalankan composer install..."
-    composer install --no-dev --optimize-autoloader --no-interaction
+    composer install --no-dev --optimize-autoloader
 else
-    echo "✅ Vendor sudah ada, melangkau composer install..."
+    echo "✅ Direktori vendor telah wujud. Melangkau composer install..."
 fi
 
 # --- KONFIGURASI .env ---
 echo "⚙️ Mengemaskini konfigurasi .env..."
-sed -i "s|APP_URL=.*|APP_URL=https://localhost|" .env
+sed -i "s|APP_URL=.*|APP_URL=http://localhost|" .env
 sed -i "s|DB_HOST=.*|DB_HOST=127.0.0.1|" .env
 sed -i "s|DB_DATABASE=.*|DB_DATABASE=${DB_NAME}|" .env
 sed -i "s|DB_USERNAME=.*|DB_USERNAME=${DB_USER}|" .env
@@ -102,38 +103,19 @@ echo "👤 Mencipta admin ${EMAIL} (${USERNAME})..."
 if ! php artisan p:user:list | grep -q "$EMAIL"; then
     php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --name="${FULLNAME}" --password="${PASSWORD}" --admin=1
 else
-    echo "✅ Akaun admin sudah wujud, melangkau..."
+    echo "✅ Akaun admin telah wujud. Melangkau..."
 fi
 
-# --- Buat SSL Self-Signed untuk localhost ---
-echo "🔐 Menyediakan SSL self-signed untuk localhost..."
-sudo mkdir -p /etc/nginx/ssl
-if [ ! -f /etc/nginx/ssl/localhost.key ] || [ ! -f /etc/nginx/ssl/localhost.crt ]; then
-    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-      -keyout /etc/nginx/ssl/localhost.key \
-      -out /etc/nginx/ssl/localhost.crt \
-      -subj "/C=MY/ST=Selangor/L=Shah Alam/O=MyOrg/OU=IT/CN=localhost"
-fi
-
-# --- NGINX CONFIG with SSL ---
+# --- SETUP NGINX ---
 if [ ! -f /etc/nginx/sites-available/pterodactyl ]; then
-    echo "🌐 Menyediakan konfigurasi NGINX dengan SSL..."
+    echo "🌐 Menyediakan NGINX config..."
     sudo tee /etc/nginx/sites-available/pterodactyl > /dev/null <<EOL
 server {
     listen 80;
     server_name localhost;
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name localhost;
 
     root /var/www/panel/public;
     index index.php index.html;
-
-    ssl_certificate /etc/nginx/ssl/localhost.crt;
-    ssl_certificate_key /etc/nginx/ssl/localhost.key;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -154,24 +136,55 @@ fi
 
 sudo nginx -t && sudo systemctl restart nginx
 
-# --- INSTALL WINGS (PTERODACTYL DAEMON) ---
-echo "🚀 Memasang Wings (Pterodactyl Daemon)..."
-
-if ! command -v wings &> /dev/null; then
-    curl -Lo wings.tar.gz https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64.tar.gz
-    tar -xzvf wings.tar.gz
+# --- PASANG WINGS (DAEMON PTERODACTYL) ---
+if [ ! -f /usr/local/bin/wings ]; then
+    echo "🚀 Memasang Wings daemon..."
+    curl -L https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64 -o wings
+    chmod +x wings
     sudo mv wings /usr/local/bin/wings
-    rm wings.tar.gz
 
-    sudo useradd -r -m -d /var/lib/wings wings || true
+    # Setup systemd service for wings
+    sudo tee /etc/systemd/system/wings.service > /dev/null <<EOL
+[Unit]
+Description=Pterodactyl Wings Daemon
+After=network.target
 
-    sudo mkdir -p /etc/wings /var/lib/wings
+[Service]
+User=$USER
+WorkingDirectory=/var/lib/pterodactyl
+ExecStart=/usr/local/bin/wings
+Restart=on-failure
+StartLimitInterval=600
+StartLimitBurst=5
 
-    sudo chown -R wings:wings /etc/wings /var/lib/wings
+[Install]
+WantedBy=multi-user.target
+EOL
+
+    sudo mkdir -p /var/lib/pterodactyl
+    sudo chown -R $USER:$USER /var/lib/pterodactyl
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now wings
+else
+    echo "✅ Wings daemon telah dipasang."
 fi
 
-echo "✅ Semua proses selesai! Panel boleh diakses di https://localhost"
+# --- PASANG SSL dengan Certbot (LetsEncrypt) ---
+echo "🔐 Memasang SSL (Let's Encrypt)..."
+if ! sudo certbot certificates | grep -q "localhost"; then
+    sudo certbot --nginx -d localhost --non-interactive --agree-tos -m "$EMAIL" --redirect || echo "⚠️ Gagal pasang SSL untuk localhost, mungkin domain localhost tidak sesuai."
+else
+    echo "✅ SSL certificate untuk localhost sudah ada."
+fi
 
+# --- MAKLUMAT SIAP ---
+echo ""
 echo "======================================="
-echo "🛠 PTERODACTYL PANEL + WINGS SIAP DIPASANG!"
+echo "✅ PTERODACTYL PANEL TELAH DIPASANG!"
+echo "🌐 URL     : http://localhost"
+echo "👤 Nama    : ${FULLNAME}"
+echo "🆔 Username: ${USERNAME}"
+echo "📧 Email   : ${EMAIL}"
+echo "🔐 Password: ${PASSWORD}"
 echo "======================================="
