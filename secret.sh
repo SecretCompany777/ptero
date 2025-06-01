@@ -54,6 +54,17 @@ sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY 
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'127.0.0.1';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
+# --- PASANG COMPOSER JIKA TIADA ---
+if ! command -v composer &> /dev/null; then
+    echo "📦 Memasang Composer..."
+    curl -sS https://getcomposer.org/installer | php
+    sudo mv composer.phar /usr/local/bin/composer
+    composer --version
+else
+    echo "✅ Composer telah dipasang."
+fi
+
+
 # --- MUAT TURUN PANEL ---
 if [ ! -d /var/www/panel ]; then
     echo "⬇️ Memuat turun Pterodactyl Panel..."
