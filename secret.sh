@@ -70,7 +70,7 @@ if [ ! -d /var/www/panel ]; then
     sudo git clone https://github.com/pterodactyl/panel.git /var/www/panel
     sudo chown -R $USER:$USER /var/www/panel
 fi
-cd /var/www/panel
+cd /var/www/panel || { echo "❌ Gagal akses ke /var/www/panel"; exit 1; }
 
 # --- COPY .env JIKA BELUM ADA ---
 if [ ! -f .env ]; then
@@ -100,7 +100,7 @@ php artisan migrate --seed --force
 
 # --- CIPTA ADMIN ---
 echo "👤 Mencipta admin ${EMAIL} (${USERNAME})..."
-if ! php artisan p:user:list | grep -q "$EMAIL"; then
+if ! php artisan down && php artisan tinker --execute="echo App\\Models\\User::where('email', '${EMAIL}')->exists() ? '1' : '0';" | grep -q 1; then
     php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --password="${PASSWORD}" --admin=1
 else
     echo "✅ Akaun admin telah wujud. Melangkau..."
@@ -114,23 +114,23 @@ server {
     listen 80;
     server_name localhost;
 
-    root /var/www/pterodactyl/public;
+    root /var/www/panel/public;
     index index.php;
 
     access_log /var/log/nginx/pterodactyl_access.log;
     error_log /var/log/nginx/pterodactyl_error.log;
 
     location / {
-        try_files $uri $uri/ /index.php?$query_string;
+        try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
-    location ~ \.php$ {
-        fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.2-fpm.sock; # tukar ikut versi PHP kamu
+    location ~ \.php\$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_param HTTP_PROXY "";  # optional, elak masalah proxy
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param HTTP_PROXY "";
     }
 
     location ~ /\.ht {
