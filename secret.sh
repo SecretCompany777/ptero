@@ -64,36 +64,44 @@ else
     echo "✅ Composer telah dipasang."
 fi
 
-
 # --- MUAT TURUN PANEL ---
 if [ ! -d /var/www/panel ]; then
     echo "⬇️ Memuat turun Pterodactyl Panel..."
     sudo git clone https://github.com/pterodactyl/panel.git /var/www/panel
-    cd /var/www/panel
+    sudo chown -R $USER:$USER /var/www/panel
+fi
+cd /var/www/panel
+
+# --- COPY .env JIKA BELUM ADA ---
+if [ ! -f .env ]; then
     sudo cp .env.example .env
-    sudo composer install --no-dev --optimize-autoloader
+fi
+
+# --- COMPOSER INSTALL JIKA TIADA vendor/ ---
+if [ ! -d "vendor" ]; then
+    echo "📦 Menjalankan composer install..."
+    composer install --no-dev --optimize-autoloader
 else
-    echo "✅ Panel telah dimuat turun. Melangkau..."
-    cd /var/www/panel
+    echo "✅ Direktori vendor telah wujud. Melangkau composer install..."
 fi
 
 # --- KONFIGURASI .env ---
 echo "⚙️ Mengemaskini konfigurasi .env..."
-sudo sed -i "s|APP_URL=.*|APP_URL=http://localhost|" .env
-sudo sed -i "s|DB_HOST=.*|DB_HOST=127.0.0.1|" .env
-sudo sed -i "s|DB_DATABASE=.*|DB_DATABASE=${DB_NAME}|" .env
-sudo sed -i "s|DB_USERNAME=.*|DB_USERNAME=${DB_USER}|" .env
-sudo sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|" .env
+sed -i "s|APP_URL=.*|APP_URL=http://localhost|" .env
+sed -i "s|DB_HOST=.*|DB_HOST=127.0.0.1|" .env
+sed -i "s|DB_DATABASE=.*|DB_DATABASE=${DB_NAME}|" .env
+sed -i "s|DB_USERNAME=.*|DB_USERNAME=${DB_USER}|" .env
+sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|" .env
 
 # --- ARTISAN SETUP ---
 echo "🛠 Menjalankan artisan setup..."
-sudo php artisan key:generate --force
-sudo php artisan migrate --seed --force
+php artisan key:generate --force
+php artisan migrate --seed --force
 
 # --- CIPTA ADMIN ---
 echo "👤 Mencipta admin ${EMAIL} (${USERNAME})..."
-if ! sudo php artisan p:user:list | grep -q "$EMAIL"; then
-    sudo php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --name="${FULLNAME}" --password="${PASSWORD}" --admin=1
+if ! php artisan p:user:list | grep -q "$EMAIL"; then
+    php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --name="${FULLNAME}" --password="${PASSWORD}" --admin=1
 else
     echo "✅ Akaun admin telah wujud. Melangkau..."
 fi
@@ -124,11 +132,9 @@ server {
 }
 EOL
     sudo ln -s /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/ || true
-    sudo nginx -t && sudo systemctl restart nginx
-else
-    echo "✅ NGINX config telah ada. Melangkau..."
-    sudo nginx -t && sudo systemctl restart nginx
 fi
+
+sudo nginx -t && sudo systemctl restart nginx
 
 # --- MAKLUMAT SIAP ---
 echo ""
