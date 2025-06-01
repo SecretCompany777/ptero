@@ -31,21 +31,16 @@ check_and_install() {
 
 sudo apt update && sudo apt upgrade -y
 
-for pkg in curl git unzip nginx mariadb-server redis-server software-properties-common jq certbot python3-certbot-nginx; do
+for pkg in curl git unzip nginx mariadb-server redis-server software-properties-common jq certbot python3-certbot-nginx php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath; do
     check_and_install "$pkg"
 done
 
-# --- PPA PHP 8.2 ---
+# --- PPA PHP 8.2 (pastikan ada) ---
 if ! php -v | grep -q "PHP 8.2"; then
     echo "➕ Menambah PPA PHP 8.2..."
     sudo add-apt-repository ppa:ondrej/php -y
     sudo apt update
 fi
-
-# --- PASANG PHP 8.2 DAN MODULE ---
-for phppkg in php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath; do
-    check_and_install "$phppkg"
-done
 
 # --- SETUP DATABASE ---
 echo "🗃️ Menyediakan pangkalan data..."
@@ -74,7 +69,7 @@ cd /var/www/panel || { echo "❌ Gagal akses ke /var/www/panel"; exit 1; }
 
 # --- COPY .env JIKA BELUM ADA ---
 if [ ! -f .env ]; then
-    sudo cp .env.example .env
+    cp .env.example .env
 fi
 
 # --- COMPOSER INSTALL JIKA TIADA vendor/ ---
@@ -100,7 +95,8 @@ php artisan migrate --seed --force
 
 # --- CIPTA ADMIN ---
 echo "👤 Mencipta admin ${EMAIL} (${USERNAME})..."
-if ! php artisan down && php artisan tinker --execute="echo App\\Models\\User::where('email', '${EMAIL}')->exists() ? '1' : '0';" | grep -q 1; then
+ADMIN_EXISTS=$(php artisan tinker --execute="echo App\\Models\\User::where('email', '${EMAIL}')->exists() ? '1' : '0';")
+if [ "$ADMIN_EXISTS" != "1" ]; then
     php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --password="${PASSWORD}" --admin=1
 else
     echo "✅ Akaun admin telah wujud. Melangkau..."
@@ -222,33 +218,15 @@ if [ $? -ne 0 ]; then
     echo "    sudo nginx -t"
     has_error=true
 else
-    echo "✅ Konfigurasi NGINX betul. Memuat semula NGINX..."
-    sudo systemctl reload nginx
+    echo "✅ Konfigurasi NGINX sah."
 fi
 
-# 4. Buang default config (jika perlu)
-if [ -f /etc/nginx/sites-enabled/default ]; then
-    echo "⚠️ Konfigurasi default NGINX masih aktif. Menyahaktifkan..."
-    sudo rm /etc/nginx/sites-enabled/default
-    sudo systemctl reload nginx
-    echo "✅ Default config telah dibuang."
-fi
+# 4. Semak log error
+echo "🧪 Semakan ringkas log error NGINX dan PHP-FPM..."
+sudo tail -n 10 /var/log/nginx/pterodactyl_error.log || true
+sudo journalctl -u php8.2-fpm -n 10 --no-pager || true
 
-# 5. Semak fail root & index.php
-if [ ! -f /var/www/panel/public/index.php ]; then
-    echo "❌ Fail index.php tiada dalam public/. Migrasi mungkin gagal."
-    echo "   Jalankan semula:"
-    echo "   cd /var/www/panel && php artisan migrate --seed --force"
-    has_error=true
-else
-    echo "✅ index.php wujud di public/. OK."
-fi
-
-# 6. SSL Check
-if grep -q "listen 443" /etc/nginx/sites-enabled/pterodactyl; then
-    echo "⚠️ Anda telah cuba pasang SSL untuk localhost."
-    echo "   Sila gunakan http://localhost sahaja kerana certbot tidak menyokong localhost."
-fi
+echo ""
 
 # --- MAKLUMAT SIAP ---
 echo ""
@@ -266,4 +244,3 @@ else
     echo "SILA BUKA http://localhost DALAM PELAYAR ANDA UNTUK MENGAKSES PANEL."
 fi
 echo "======================================="
-
