@@ -19,7 +19,14 @@ DB_NAME="panel"
 
 # --- PASANG DEPENDENCIES ---
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y nginx mariadb-server php8.1 php8.1-{cli,fpm,mysql,mbstring,xml,curl,zip} unzip git curl redis-server composer
+sudo apt install -y curl git unzip nginx mariadb-server redis-server software-properties-common
+
+# --- TAMBAH PPA UNTUK PHP 8.1 ---
+sudo add-apt-repository ppa:ondrej/php -y
+sudo apt update
+
+# --- PASANG PHP 8.1 DAN MODULE ---
+sudo apt install -y php8.1 php8.1-cli php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml php8.1-curl php8.1-zip composer
 
 # --- SETUP MARIA DB ---
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
