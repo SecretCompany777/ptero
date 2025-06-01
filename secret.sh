@@ -185,13 +185,85 @@ else
     echo "✅ SSL certificate untuk localhost sudah ada."
 fi
 
+# --- DIAGNOSTIK AKHIR UNTUK ERROR "Service Unavailable" ---
+echo ""
+echo "🔎 Menjalankan diagnostik untuk masalah biasa..."
+
+has_error=false
+
+# 1. Semak status PHP-FPM
+echo "🧪 Semakan status PHP-FPM..."
+if ! systemctl is-active --quiet php8.2-fpm; then
+    echo "❌ PHP-FPM tidak aktif. Cuba menghidupkan semula..."
+    sudo systemctl restart php8.2-fpm
+    sleep 2
+    if ! systemctl is-active --quiet php8.2-fpm; then
+        echo "❌ Gagal hidupkan php8.2-fpm. Sila semak dengan:"
+        echo "    sudo journalctl -u php8.2-fpm"
+        has_error=true
+    else
+        echo "✅ php8.2-fpm telah berjaya dimulakan."
+    fi
+else
+    echo "✅ php8.2-fpm sedang berjalan."
+fi
+
+# 2. Semak permission fail
+echo "🧪 Semakan permission folder..."
+sudo chown -R www-data:www-data /var/www/panel
+sudo chmod -R 755 /var/www/panel
+echo "✅ Permission telah dikemaskini ke www-data."
+
+# 3. Semak konfigurasi NGINX
+echo "🧪 Semakan konfigurasi NGINX..."
+sudo nginx -t
+if [ $? -ne 0 ]; then
+    echo "❌ Konfigurasi NGINX bermasalah. Sila semak dengan:"
+    echo "    sudo nginx -t"
+    has_error=true
+else
+    echo "✅ Konfigurasi NGINX betul. Memuat semula NGINX..."
+    sudo systemctl reload nginx
+fi
+
+# 4. Buang default config (jika perlu)
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    echo "⚠️ Konfigurasi default NGINX masih aktif. Menyahaktifkan..."
+    sudo rm /etc/nginx/sites-enabled/default
+    sudo systemctl reload nginx
+    echo "✅ Default config telah dibuang."
+fi
+
+# 5. Semak fail root & index.php
+if [ ! -f /var/www/panel/public/index.php ]; then
+    echo "❌ Fail index.php tiada dalam public/. Migrasi mungkin gagal."
+    echo "   Jalankan semula:"
+    echo "   cd /var/www/panel && php artisan migrate --seed --force"
+    has_error=true
+else
+    echo "✅ index.php wujud di public/. OK."
+fi
+
+# 6. SSL Check
+if grep -q "listen 443" /etc/nginx/sites-enabled/pterodactyl; then
+    echo "⚠️ Anda telah cuba pasang SSL untuk localhost."
+    echo "   Sila gunakan http://localhost sahaja kerana certbot tidak menyokong localhost."
+fi
+
 # --- MAKLUMAT SIAP ---
 echo ""
 echo "======================================="
-echo "✅ PTERODACTYL PANEL TELAH DIPASANG!"
-echo "🌐 URL     : http://localhost"
-echo "👤 Nama    : ${FULLNAME}"
-echo "🆔 Username: ${USERNAME}"
-echo "📧 Email   : ${EMAIL}"
-echo "🔐 Password: ${PASSWORD}"
+if [ "$has_error" = true ]; then
+    echo "❌ Beberapa masalah dikesan semasa pemasangan."
+    echo "🔧 Sila ikut cadangan di atas atau semak log untuk maklumat lanjut."
+else
+    echo "✅ PTERODACTYL PANEL TELAH DIPASANG DENGAN JAYANYA!"
+    echo "🌐 URL     : http://localhost"
+    echo "👤 Nama    : ${FULLNAME}"
+    echo "🆔 Username: ${USERNAME}"
+    echo "📧 Email   : ${EMAIL}"
+    echo "🔐 Password: ${PASSWORD}"
+    echo "SILA BUKA http://localhost DALAM PELAYAR ANDA UNTUK MENGAKSES PANEL."
+fi
 echo "======================================="
+
