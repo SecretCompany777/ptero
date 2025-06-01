@@ -101,7 +101,7 @@ php artisan migrate --seed --force
 # --- CIPTA ADMIN ---
 echo "👤 Mencipta admin ${EMAIL} (${USERNAME})..."
 if ! php artisan p:user:list | grep -q "$EMAIL"; then
-    php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --name="${FULLNAME}" --password="${PASSWORD}" --admin=1
+    php artisan p:user:make --email="${EMAIL}" --username="${USERNAME}" --password="${PASSWORD}" --admin=1
 else
     echo "✅ Akaun admin telah wujud. Melangkau..."
 fi
