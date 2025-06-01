@@ -1,6 +1,3 @@
-baiki disini, kau ni satu satu baiki semua dan tambah la apa yang patut kau AI patut tahu takkan nak keluar error baru aku nak bagitau ada error tu error ni baru kau nak repair.
-
-
 #!/bin/bash
 set -e
 
