@@ -1,9 +1,11 @@
 #!/bin/bash
 set -e
 
-echo "======================================="
-echo "🛠  Pterodactyl Panel Localhost Installer"
-echo "======================================="
+export DEBIAN_FRONTEND=noninteractive
+
+# =======================================
+echo "\n🛠  Pterodactyl Panel Localhost Installer"
+echo "=======================================\n"
 
 # --- INPUT PENGGUNA ---
 read -p "Nama penuh admin        : " FULLNAME
@@ -17,8 +19,8 @@ DB_USER="ptero"
 DB_PASS="p@ssw0rd"
 DB_NAME="panel"
 
-# --- PASANG DEPENDENSI (SKIP JIKA SUDAH ADA) ---
-echo "🔍 Memeriksa dependensi..."
+# --- MEMERIKSA DAN PASANG DEPENDENSI ---
+echo "🔍 Memeriksa dan memasang dependensi..."
 
 check_and_install() {
     if ! dpkg -l | grep -q "^ii  $1 "; then
@@ -42,8 +44,14 @@ if ! php -v | grep -q "PHP 8.1"; then
     sudo apt update
 fi
 
-# --- PASANG PHP 8.1 DAN MODULE ---
-for phppkg in php8.1 php8.1-cli php8.1-fpm php8.1-mysql php8.1-mbstring php8.1-xml php8.1-curl php8.1-zip; do
+# --- PASANG PHP 8.1 DAN EXTENSION YANG DIPERLUKAN ---
+PHP_MODULES=(
+    php8.1 php8.1-cli php8.1-fpm php8.1-mysql php8.1-mbstring \
+    php8.1-xml php8.1-curl php8.1-zip php8.1-bcmath php8.1-gd \
+    php8.1-tokenizer php8.1-common php8.1-readline php8.1-fileinfo
+)
+
+for phppkg in "${PHP_MODULES[@]}"; do
     check_and_install "$phppkg"
 done
 
@@ -54,7 +62,7 @@ sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY 
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'127.0.0.1';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
-# --- PASANG COMPOSER JIKA TIADA ---
+# --- PASANG COMPOSER ---
 if ! command -v composer &> /dev/null; then
     echo "📦 Memasang Composer..."
     curl -sS https://getcomposer.org/installer | php
@@ -72,18 +80,14 @@ if [ ! -d /var/www/panel ]; then
 fi
 cd /var/www/panel
 
-# --- COPY .env JIKA BELUM ADA ---
+# --- COPY .env ---
 if [ ! -f .env ]; then
     sudo cp .env.example .env
 fi
 
-# --- COMPOSER INSTALL JIKA TIADA vendor/ ---
-if [ ! -d "vendor" ]; then
-    echo "📦 Menjalankan composer install..."
-    composer install --no-dev --optimize-autoloader
-else
-    echo "✅ Direktori vendor telah wujud. Melangkau composer install..."
-fi
+# --- COMPOSER INSTALL ---
+echo "📦 Menjalankan composer install..."
+composer install --no-dev --optimize-autoloader --no-interaction
 
 # --- KONFIGURASI .env ---
 echo "⚙️ Mengemaskini konfigurasi .env..."
@@ -131,7 +135,7 @@ server {
     }
 }
 EOL
-    sudo ln -s /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/ || true
+    sudo ln -sf /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/
 fi
 
 sudo nginx -t && sudo systemctl restart nginx
