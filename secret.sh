@@ -1,15 +1,16 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+IFS=$'\n\t'
 
 echo "======================================="
 echo "🛠  Pterodactyl Panel Localhost Installer"
 echo "======================================="
 
 # --- INPUT PENGGUNA ---
-read -p "Nama penuh admin        : " FULLNAME
-read -p "Username admin (login)  : " USERNAME
-read -p "Email admin             : " EMAIL
-read -s -p "Password admin          : " PASSWORD
+read -rp "Nama penuh admin        : " FULLNAME
+read -rp "Username admin (login)  : " USERNAME
+read -rp "Email admin             : " EMAIL
+read -rsp "Password admin          : " PASSWORD
 echo ""
 
 # --- DEFAULT DATABASE CONFIG ---
@@ -17,11 +18,9 @@ DB_USER="ptero"
 DB_PASS="p@ssw0rd"
 DB_NAME="panel"
 
-# --- PASANG DEPENDENSI (SKIP JIKA SUDAH ADA) ---
-echo "🔍 Memeriksa dependensi..."
-
+# --- FUNCTIONS ---
 check_and_install() {
-    if ! dpkg -l | grep -q "^ii  $1 "; then
+    if ! dpkg -s "$1" >/dev/null 2>&1; then
         echo "📦 Memasang $1..."
         sudo apt install -y "$1"
     else
@@ -29,33 +28,53 @@ check_and_install() {
     fi
 }
 
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# --- UPDATE SISTEM ---
+echo "🔄 Mengemas kini sistem..."
 sudo apt update && sudo apt upgrade -y
 
-for pkg in curl git unzip nginx mariadb-server redis-server software-properties-common jq certbot python3-certbot-nginx; do
+# --- PASANG DEPENDENSI ---
+echo "🔍 Memeriksa dan memasang dependensi..."
+for pkg in curl git unzip nginx mariadb-server redis-server software-properties-common jq certbot python3-certbot-nginx mysql-client; do
     check_and_install "$pkg"
 done
 
-# --- PPA PHP 8.2 ---
-if ! php -v | grep -q "PHP 8.2"; then
+# --- PASANG PPA PHP 8.2 JIKA BELUM ADA ---
+if ! php -v 2>/dev/null | grep -q "PHP 8.2"; then
     echo "➕ Menambah PPA PHP 8.2..."
     sudo add-apt-repository ppa:ondrej/php -y
     sudo apt update
 fi
 
 # --- PASANG PHP 8.2 DAN MODULE ---
-for phppkg in php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath; do
+for phppkg in php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-mbstring php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-tokenizer php8.2-ctype php8.2-json php8.2-common; do
     check_and_install "$phppkg"
 done
 
+# --- PASTIKAN PHP-FPM BERJALAN ---
+echo "🔧 Memastikan PHP-FPM berjalan..."
+sudo systemctl enable --now php8.2-fpm
+
 # --- SETUP DATABASE ---
 echo "🗃️ Menyediakan pangkalan data..."
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
-sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'127.0.0.1';"
-sudo mysql -e "FLUSH PRIVILEGES;"
+sudo systemctl enable --now mariadb
+
+# Amankan MariaDB root password (kalau belum):
+sudo mysql_secure_installation || true
+
+# Buat database & user:
+mysql -u root <<EOF
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1';
+FLUSH PRIVILEGES;
+EOF
 
 # --- PASANG COMPOSER JIKA TIADA ---
-if ! command -v composer &> /dev/null; then
+if ! command_exists composer; then
     echo "📦 Memasang Composer..."
     curl -sS https://getcomposer.org/installer | php
     sudo mv composer.phar /usr/local/bin/composer
@@ -68,16 +87,20 @@ fi
 if [ ! -d /var/www/panel ]; then
     echo "⬇️ Memuat turun Pterodactyl Panel..."
     sudo git clone https://github.com/pterodactyl/panel.git /var/www/panel
-    sudo chown -R $USER:$USER /var/www/panel
+    sudo chown -R "$USER":"$USER" /var/www/panel
 fi
 cd /var/www/panel
 
 # --- COPY .env JIKA BELUM ADA ---
 if [ ! -f .env ]; then
-    sudo cp .env.example .env
+    cp .env.example .env
 fi
 
-# --- COMPOSER INSTALL JIKA TIADA vendor/ ---
+# --- PASTIKAN PERMISSION betul ---
+chmod 640 .env
+chown "$USER":"$USER" .env
+
+# --- COMPOSER INSTALL ---
 if [ ! -d "vendor" ]; then
     echo "📦 Menjalankan composer install..."
     composer install --no-dev --optimize-autoloader
@@ -107,15 +130,19 @@ else
 fi
 
 # --- SETUP NGINX ---
-if [ ! -f /etc/nginx/sites-available/pterodactyl ]; then
-    echo "🌐 Menyediakan NGINX config..."
-    sudo tee /etc/nginx/sites-available/pterodactyl > /dev/null <<EOL
+echo "🌐 Menyediakan konfigurasi NGINX..."
+NGINX_CONF="/etc/nginx/sites-available/pterodactyl"
+if [ ! -f "$NGINX_CONF" ]; then
+    sudo tee "$NGINX_CONF" > /dev/null <<EOL
 server {
     listen 80;
     server_name localhost;
 
     root /var/www/panel/public;
     index index.php index.html;
+
+    access_log /var/log/nginx/pterodactyl_access.log;
+    error_log /var/log/nginx/pterodactyl_error.log;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -124,6 +151,7 @@ server {
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     }
 
     location ~ /\.ht {
@@ -131,19 +159,28 @@ server {
     }
 }
 EOL
-    sudo ln -sf /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/
+    sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 fi
 
-sudo nginx -t && sudo systemctl restart nginx
+# Buang default nginx config untuk elak clash
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    sudo rm /etc/nginx/sites-enabled/default
+fi
+
+echo "🔍 Memeriksa konfigurasi NGINX..."
+sudo nginx -t
+
+echo "♻️ Memulakan semula NGINX..."
+sudo systemctl restart nginx
 
 # --- PASANG WINGS (DAEMON PTERODACTYL) ---
-if [ ! -f /usr/local/bin/wings ]; then
-    echo "🚀 Memasang Wings daemon..."
+echo "🚀 Memasang Wings daemon..."
+if ! command_exists wings; then
     curl -L https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64 -o wings
     chmod +x wings
     sudo mv wings /usr/local/bin/wings
 
-    # Setup systemd service for wings
+    # Setup systemd service
     sudo tee /etc/systemd/system/wings.service > /dev/null <<EOL
 [Unit]
 Description=Pterodactyl Wings Daemon
@@ -162,7 +199,7 @@ WantedBy=multi-user.target
 EOL
 
     sudo mkdir -p /var/lib/pterodactyl
-    sudo chown -R $USER:$USER /var/lib/pterodactyl
+    sudo chown -R "$USER":"$USER" /var/lib/pterodactyl
 
     sudo systemctl daemon-reload
     sudo systemctl enable --now wings
@@ -170,10 +207,13 @@ else
     echo "✅ Wings daemon telah dipasang."
 fi
 
-# --- PASANG SSL dengan Certbot (LetsEncrypt) ---
+# --- PASANG SSL dengan Certbot (Let’s Encrypt) ---
 echo "🔐 Memasang SSL (Let's Encrypt)..."
 if ! sudo certbot certificates | grep -q "localhost"; then
-    sudo certbot --nginx -d localhost --non-interactive --agree-tos -m "$EMAIL" --redirect || echo "⚠️ Gagal pasang SSL untuk localhost, mungkin domain localhost tidak sesuai."
+    if ! sudo certbot --nginx -d localhost --non-interactive --agree-tos -m "$EMAIL" --redirect; then
+        echo "⚠️ Gagal pasang SSL untuk localhost, mungkin domain 'localhost' tidak sesuai untuk sertifikat SSL."
+        echo "    Anda boleh gunakan self-signed cert atau skip SSL untuk localhost."
+    fi
 else
     echo "✅ SSL certificate untuk localhost sudah ada."
 fi
@@ -186,5 +226,5 @@ echo "🌐 URL     : http://localhost"
 echo "👤 Nama    : ${FULLNAME}"
 echo "🆔 Username: ${USERNAME}"
 echo "📧 Email   : ${EMAIL}"
-echo "🔐 Password: ${PASSWORD}"
+echo "🔐 Password: (disembunyikan untuk keselamatan)"
 echo "======================================="
